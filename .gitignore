@@ -1,0 +1,32 @@
+# Virtual environments
+QuantaHire/
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments and Secrets
+.env
+.env.local
+.env.production
+.env.development
+.env.staging
+.env.test
+
+# Uploads and databases
+uploads/
+rag_storage/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
