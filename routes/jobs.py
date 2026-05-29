@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from db.mongo import jobs_col
+from db.mongo import jobs_col, results_col, sessions_col, db
 from bson import ObjectId
 import uuid
 
@@ -41,3 +41,34 @@ async def delete_job(job_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"message": f"Deleted job: {job_id}"}
+
+@router.put("/{job_id}")
+async def update_job(job_id: str, data: dict):
+    """Update a job description and reset all its feedback history/matching sessions."""
+    # 1. Update the job details in the jobs collection
+    data.pop("_id", None)
+    data.pop("id", None)
+    data.pop("job_id", None)
+
+    query = {"$or": [{"id": job_id}, {"job_id": job_id}]}
+    result = await jobs_col.update_one(query, {"$set": data})
+
+    updated_job = await jobs_col.find_one(query, {"_id": 0})
+    if not updated_job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # 2. Reset / clear feedback history and matching sessions:
+    # A. Delete matching sessions for this job from 'sessions' collection
+    await sessions_col.delete_many({"job_id": job_id})
+
+    # B. Delete saved ranking results for this job from 'results' collection
+    await results_col.delete_many({"job_id": job_id})
+
+    # C. Reset candidate application statuses for this job back to "processed" (clears shortlist/reject)
+    application_col = db["applications"]
+    await application_col.update_many(
+        {"job_id": job_id},
+        {"$set": {"status": "processed"}}
+    )
+
+    return updated_job

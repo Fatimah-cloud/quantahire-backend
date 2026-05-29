@@ -30,6 +30,9 @@ async def start_match(req: MatchRequest):
     # Run ranking
     results = await rank_cvs(job["description"], cv_records)
 
+    # Delete any existing sessions for this job to clear feedback history
+    await sessions_col.delete_many({"job_id": req.job_id})
+
     # Create session for human-in-the-loop
     session_id = f"session_{uuid.uuid4().hex[:8]}"
     session    = {
