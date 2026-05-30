@@ -13,17 +13,34 @@ class JobCreate(BaseModel):
     description: str
 
 @router.post("/")
-async def create_job(job: JobCreate):
+async def create_job(data: dict, user: dict = Depends(get_user_by_token)):
     """Create a new job description."""
-    job_id   = f"jd_{uuid.uuid4().hex[:8]}"
-    job_data = {
-        "job_id":      job_id,
-        "title":       job.title,
-        "description": job.description,
-        "status":      "open",
-    }
-    await jobs_col.insert_one(job_data)
-    return {"message": "Job created", "job_id": job_id}
+    role = user.get("role")
+    user_id = user.get("id")
+    email = user.get("email")
+    
+    print(f"[DEBUG POST /api/jobs/] Request body: {data}")
+    print(f"[DEBUG POST /api/jobs/] Authenticated user ID: {user_id}, role: {role}, email: {email}")
+    
+    if role != "recruiter":
+        raise HTTPException(status_code=403, detail="Only recruiters can post jobs")
+        
+    job_id = f"jd_{uuid.uuid4().hex[:8]}"
+    
+    # Inject values
+    data["job_id"] = job_id
+    data["id"] = job_id
+    data["recruiter_id"] = user_id
+    data["created_by"] = user_id
+    data["recruiter_email"] = email
+    
+    if "status" not in data:
+        data["status"] = "open"
+        
+    print(f"[DEBUG POST /api/jobs/] Saving job data to DB: recruiter_id={data['recruiter_id']}, created_by={data['created_by']}, recruiter_email={data['recruiter_email']}")
+    
+    await jobs_col.insert_one(data)
+    return {"message": "Job created", "job_id": job_id, "id": job_id}
 
 @router.get("/")
 async def list_jobs(
@@ -34,6 +51,9 @@ async def list_jobs(
 ):
     """List all job descriptions."""
     query = {}
+    print(f"[DEBUG GET /api/jobs/] Fetch request by User ID: {user.get('id')}, Role: {user.get('role')}, Email: {user.get('email')}")
+    print(f"[DEBUG GET /api/jobs/] Input query filters - recruiter_id: {recruiter_id}, created_by: {created_by}, recruiter_email: {recruiter_email}")
+    
     if user.get("role") == "recruiter":
         # Force recruiter to only see their own jobs
         user_id = user["id"]
@@ -56,10 +76,13 @@ async def list_jobs(
         if or_conditions:
             query["$or"] = or_conditions
 
+    print(f"[DEBUG GET /api/jobs/] Database query filter applied: {query}")
     jobs = await jobs_col.find(query, {"_id": 0}).to_list(length=1000)
     for job in jobs:
         if "id" not in job and "job_id" in job:
             job["id"] = job["job_id"]
+            
+    print(f"[DEBUG GET /api/jobs/] Found {len(jobs)} jobs.")
     return jobs
 
 @router.get("/{job_id}")
@@ -79,6 +102,7 @@ async def delete_job(job_id: str):
 @router.put("/{job_id}")
 async def update_job(job_id: str, data: dict):
     """Update a job description and reset all its feedback history/matching sessions."""
+    print(f"[DEBUG PUT /api/jobs/{job_id}] Request body received: {data}")
     # 1. Update the job details in the jobs collection
     data.pop("_id", None)
     data.pop("id", None)

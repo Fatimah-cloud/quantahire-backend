@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from db.mongo import db
 from bson import ObjectId
+from routes.auth import get_user_by_token
 
 router = APIRouter(prefix="/api", tags=["Entities"])
 
@@ -19,7 +20,8 @@ def get_collection_name(plural_name: str) -> str:
         "admins": "admins",
         "interview_slots": "interview_slots",
         "assessments": "assessments",
-        "psych_questions": "psych_questions"
+        "psych_questions": "psych_questions",
+        "notifications": "notifications"
     }
     return mapping.get(name, name)
 
@@ -36,6 +38,8 @@ def format_doc(doc: dict, col_name: str) -> dict:
             doc["id"] = doc["application_id"]
         elif col_name == "cvs" and "cv_id" in doc:
             doc["id"] = doc["cv_id"]
+        elif col_name == "notifications" and "notification_id" in doc:
+            doc["id"] = doc["notification_id"]
         else:
             doc["id"] = doc["_id"]
             
@@ -122,7 +126,8 @@ async def create_entity(collection: str, data: dict):
             "recruiters": "rec",
             "interview_slots": "slot",
             "assessments": "asmt",
-            "psych_questions": "q"
+            "psych_questions": "q",
+            "notifications": "notif"
         }.get(col_name, "item")
         data["id"] = f"{prefix}_{uuid.uuid4().hex[:8]}"
         
@@ -135,6 +140,8 @@ async def create_entity(collection: str, data: dict):
         data["job_id"] = data["id"]
     elif col_name == "applications" and "application_id" not in data:
         data["application_id"] = data["id"]
+    elif col_name == "notifications" and "notification_id" not in data:
+        data["notification_id"] = data["id"]
         
     if col_name == "jobs" and "status" not in data:
         data["status"] = "open"
@@ -159,6 +166,48 @@ async def update_entity(collection: str, id: str, data: dict):
         {"cv_id": id}
     ]}
     
+    # Intercept status changes to generate notifications for candidates
+    if col_name == "applications" and "status" in data:
+        new_status = data["status"]
+        if new_status in ["shortlisted", "rejected"]:
+            old_app = await col.find_one(query)
+            if old_app and old_app.get("status") != new_status:
+                cand_email = old_app.get("candidate_email")
+                cand = await db["candidates"].find_one({"email": cand_email})
+                candidate_id = cand.get("user_id") if cand else None
+                if not candidate_id:
+                    user_doc = await db["users"].find_one({"email": cand_email})
+                    if user_doc:
+                        candidate_id = str(user_doc.get("id"))
+                
+                if candidate_id:
+                    # Fetch job info to get company name and job title
+                    job_id = old_app.get("job_id")
+                    job = await db["jobs"].find_one({"$or": [{"id": job_id}, {"job_id": job_id}]})
+                    company_name = "Company"
+                    if job:
+                        company_name = job.get("company") or job.get("recruiter_email") or "Company"
+                    
+                    job_title = old_app.get("job_title") or (job.get("title") if job else "Position")
+                    
+                    status_word = "shortlisted" if new_status == "shortlisted" else "rejected"
+                    msg = f"Your application for {job_title} at {company_name} has been {status_word}."
+                    
+                    notif_id = f"notif_{uuid.uuid4().hex[:8]}"
+                    notif = {
+                        "id": notif_id,
+                        "notification_id": notif_id,
+                        "candidate_id": candidate_id,
+                        "application_id": old_app.get("id"),
+                        "job_title": job_title,
+                        "company_name": company_name,
+                        "status": new_status,
+                        "message": msg,
+                        "read": False,
+                        "created_date": datetime.utcnow().isoformat()
+                    }
+                    await db["notifications"].insert_one(notif)
+                    
     # Perform update in database
     result = await col.update_one(query, {"$set": data})
     if result.matched_count == 0:
@@ -203,3 +252,45 @@ async def delete_entity(collection: str, id: str):
         raise HTTPException(status_code=404, detail=f"{collection} with id {id} not found")
         
     return {"message": f"Deleted {collection} with id: {id}"}
+
+@router.get("/applications/job/{job_id}")
+async def get_applications_by_job(job_id: str, user: dict = Depends(get_user_by_token)):
+    # 1. Fetch the job details to verify ownership
+    job = await db["jobs"].find_one({"$or": [{"id": job_id}, {"job_id": job_id}]})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    # 2. Check recruiter ownership
+    role = user.get("role")
+    if role not in ["recruiter", "admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view applications")
+        
+    if role == "recruiter":
+        is_owner = (
+            job.get("recruiter_id") == user["id"] or 
+            job.get("created_by") == user["id"] or 
+            job.get("recruiter_email") == user["email"]
+        )
+        if not is_owner:
+            raise HTTPException(status_code=403, detail="You do not have access to this job's applications")
+            
+    # 3. Fetch applications for this job
+    apps = await db["applications"].find({"job_id": job_id}).to_list(length=1000)
+    
+    # 4. Format and return details
+    formatted_apps = []
+    for app in apps:
+        cv_url = app.get("cv_url", "")
+        cv_filename = cv_url.split("/")[-1] if cv_url else "—"
+        formatted_apps.append({
+            "id": app.get("id") or str(app.get("_id")),
+            "candidate_name": app.get("candidate_name") or "Unknown",
+            "candidate_email": app.get("candidate_email") or "—",
+            "cv_url": cv_url,
+            "cv_filename": cv_filename,
+            "upload_date": app.get("created_date") or app.get("created_at") or "—",
+            "match_score": app.get("match_score"),
+            "status": app.get("status") or "pending"
+        })
+        
+    return formatted_apps

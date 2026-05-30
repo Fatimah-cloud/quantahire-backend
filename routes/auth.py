@@ -1,5 +1,6 @@
 import uuid
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -155,3 +156,61 @@ async def login(req: LoginRequest):
 @router.get("/me")
 async def get_me(user: dict = Depends(get_user_by_token)):
     return user
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+@router.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    email_lower = req.email.strip().lower()
+    user = await db["users"].find_one({"email": email_lower})
+    if not user:
+        return {"message": "If an account exists with this email, you will receive a reset link."}
+        
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+    
+    reset_doc = {
+        "email": email_lower,
+        "token": token,
+        "expires_at": expires_at,
+        "used": False,
+        "created_at": datetime.utcnow()
+    }
+    await db["password_resets"].insert_one(reset_doc)
+    
+    # Log reset link to the console for testing
+    print(f"Reset link: http://localhost:5173/reset-password?token={token}")
+    
+    return {"message": "If an account exists with this email, you will receive a reset link."}
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    reset_doc = await db["password_resets"].find_one({
+        "token": req.token,
+        "used": False
+    })
+    
+    if not reset_doc:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+        
+    if datetime.utcnow() > reset_doc["expires_at"]:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+        
+    email = reset_doc["email"]
+    
+    await db["users"].update_one(
+        {"email": email},
+        {"$set": {"password": req.password}}
+    )
+    
+    await db["password_resets"].update_one(
+        {"token": req.token},
+        {"$set": {"used": True}}
+    )
+    
+    return {"message": "Password reset successful."}

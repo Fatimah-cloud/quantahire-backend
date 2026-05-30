@@ -20,8 +20,12 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(upload.router)
 app.include_router(cvs.router)
+from routes.cvs import candidate_cv_router
+app.include_router(candidate_cv_router)
 app.include_router(jobs.router)
 app.include_router(match.router)
+from routes import notifications
+app.include_router(notifications.router)
 app.include_router(entities.router)
 
 # Mount static uploads directory

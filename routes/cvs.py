@@ -3,10 +3,11 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
-from db.mongo import cvs_col
+from db.mongo import cvs_col, db
 from config import UPLOAD_DIR
+from routes.auth import get_user_by_token
 import fitz
 import docx as docx_lib
 
@@ -106,3 +107,45 @@ async def delete_cv(cv_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="CV not found")
     return {"message": f"Deleted CV: {cv_id}"}
+
+
+candidate_cv_router = APIRouter(prefix="/api/candidate", tags=["Candidate CV"])
+
+@candidate_cv_router.delete("/cv")
+async def delete_candidate_cv(user: dict = Depends(get_user_by_token)):
+    if user.get("role") != "candidate":
+        raise HTTPException(status_code=403, detail="Only candidates can delete their CV")
+        
+    user_id = user.get("id")
+    
+    # 1. Lookup the candidate's CV document
+    cv_record = await cvs_col.find_one({"user_id": user_id})
+    if cv_record:
+        file_path = cv_record.get("path")
+        # Delete local file from disk
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Failed to remove file from disk: {e}")
+        
+        # Delete the CV record from cvs collection
+        await cvs_col.delete_one({"user_id": user_id})
+        
+    # 2. Update candidates collection (remove fields)
+    candidate_update_result = await db["candidates"].update_one(
+        {"user_id": user_id},
+        {"$unset": {"cv_url": "", "cv_filename": "", "cv_uploaded_at": "", "cv_upload_date": ""}}
+    )
+    
+    # If not matched by user_id, fallback to search by user email
+    if candidate_update_result.matched_count == 0:
+        email = user.get("email")
+        if email:
+            await db["candidates"].update_one(
+                {"email": email.strip().lower()},
+                {"$unset": {"cv_url": "", "cv_filename": "", "cv_uploaded_at": "", "cv_upload_date": ""}}
+            )
+            
+    return {"message": "CV deleted successfully"}
+
