@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from db.mongo import jobs_col, results_col, sessions_col, db
 from bson import ObjectId
 import uuid
+from typing import Optional
+from routes.auth import get_user_by_token
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 
@@ -24,9 +26,37 @@ async def create_job(job: JobCreate):
     return {"message": "Job created", "job_id": job_id}
 
 @router.get("/")
-async def list_jobs():
+async def list_jobs(
+    recruiter_id: Optional[str] = None,
+    created_by: Optional[str] = None,
+    recruiter_email: Optional[str] = None,
+    user: dict = Depends(get_user_by_token)
+):
     """List all job descriptions."""
-    jobs = await jobs_col.find({}, {"_id": 0}).to_list(length=1000)
+    query = {}
+    if user.get("role") == "recruiter":
+        # Force recruiter to only see their own jobs
+        user_id = user["id"]
+        user_email = user["email"]
+        query["$or"] = [
+            {"recruiter_id": user_id},
+            {"created_by": user_id},
+            {"recruiter_email": user_email}
+        ]
+    else:
+        # Candidate/Admin - check optional filters
+        or_conditions = []
+        if recruiter_id:
+            or_conditions.append({"recruiter_id": recruiter_id})
+        if created_by:
+            or_conditions.append({"created_by": created_by})
+        if recruiter_email:
+            or_conditions.append({"recruiter_email": recruiter_email})
+            
+        if or_conditions:
+            query["$or"] = or_conditions
+
+    jobs = await jobs_col.find(query, {"_id": 0}).to_list(length=1000)
     for job in jobs:
         if "id" not in job and "job_id" in job:
             job["id"] = job["job_id"]
