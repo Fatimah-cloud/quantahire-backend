@@ -136,6 +136,9 @@ async def create_entity(collection: str, data: dict):
     elif col_name == "applications" and "application_id" not in data:
         data["application_id"] = data["id"]
         
+    if col_name == "jobs" and "status" not in data:
+        data["status"] = "open"
+        
     await col.insert_one(data)
     
     inserted = await col.find_one({"id": data["id"]})

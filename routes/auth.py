@@ -14,6 +14,8 @@ class RegisterRequest(BaseModel):
     role: str # "recruiter" or "candidate" or "admin"
     company: Optional[str] = None
     certificate_url: Optional[str] = None
+    country: Optional[str] = None
+    phone: Optional[str] = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -38,6 +40,18 @@ async def register(req: RegisterRequest):
     if existing:
         return {"error": "An account with this email already exists."}
         
+    password = req.password
+    if (
+        len(password) < 8 or
+        not any(c.isupper() for c in password) or
+        not any(c.islower() for c in password) or
+        not any(c.isdigit() for c in password) or
+        not any(not c.isalnum() for c in password)
+    ):
+        return {
+            "error": "Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character."
+        }
+
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
     created_at = datetime.utcnow().isoformat()
     
@@ -67,6 +81,8 @@ async def register(req: RegisterRequest):
             "company": req.company or "",
             "certificate_url": req.certificate_url or "",
             "status": "pending",
+            "country": req.country or "",
+            "phone": req.phone or "",
             "created_date": created_at
         }
         await db["recruiters"].insert_one(profile)

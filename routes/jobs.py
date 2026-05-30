@@ -18,6 +18,7 @@ async def create_job(job: JobCreate):
         "job_id":      job_id,
         "title":       job.title,
         "description": job.description,
+        "status":      "open",
     }
     await jobs_col.insert_one(job_data)
     return {"message": "Job created", "job_id": job_id}
@@ -26,7 +27,10 @@ async def create_job(job: JobCreate):
 async def list_jobs():
     """List all job descriptions."""
     jobs = await jobs_col.find({}, {"_id": 0}).to_list(length=1000)
-    return {"count": len(jobs), "jobs": jobs}
+    for job in jobs:
+        if "id" not in job and "job_id" in job:
+            job["id"] = job["job_id"]
+    return jobs
 
 @router.get("/{job_id}")
 async def get_job(job_id: str):

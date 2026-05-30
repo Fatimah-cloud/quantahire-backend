@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 from config import UPLOAD_DIR
 from routes import cvs, jobs, match, auth, entities, upload
+from db.mongo import db
 
 app = FastAPI(title="QuantaHire API", version="1.0.0")
 
@@ -17,11 +18,11 @@ app.add_middleware(
 
 # Register routes
 app.include_router(auth.router)
-app.include_router(entities.router)
 app.include_router(upload.router)
 app.include_router(cvs.router)
 app.include_router(jobs.router)
 app.include_router(match.router)
+app.include_router(entities.router)
 
 # Mount static uploads directory
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -34,4 +35,12 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.on_event("startup")
+async def startup_db_client():
+    # Update any jobs in the jobs collection that don't have a status field, setting it to "open"
+    try:
+        await db["jobs"].update_many({"status": {"$exists": False}}, {"$set": {"status": "open"}})
+    except Exception as e:
+        print(f"Startup migration failed: {e}")
 
