@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from db.mongo import db
 from routes.auth import get_user_by_token
@@ -14,6 +15,16 @@ async def get_notifications(user: dict = Depends(get_user_by_token)):
         n["_id"] = str(n["_id"])
         if "id" not in n:
             n["id"] = n.get("notification_id") or str(n["_id"])
+        if "created_date" in n:
+            if isinstance(n["created_date"], datetime):
+                n["created_date"] = n["created_date"].replace(tzinfo=timezone.utc, microsecond=0).isoformat().replace("+00:00", "Z")
+            elif isinstance(n["created_date"], str) and not n["created_date"].endswith("Z"):
+                n["created_date"] = n["created_date"] + "Z"
+        if "created_at" in n:
+            if isinstance(n["created_at"], datetime):
+                n["created_at"] = n["created_at"].replace(tzinfo=timezone.utc, microsecond=0).isoformat().replace("+00:00", "Z")
+            elif isinstance(n["created_at"], str) and not n["created_at"].endswith("Z"):
+                n["created_at"] = n["created_at"] + "Z"
     return notifications
 
 @router.get("/unread/count")
@@ -40,4 +51,14 @@ async def mark_as_read(id: str, user: dict = Depends(get_user_by_token)):
     updated["_id"] = str(updated["_id"])
     if "id" not in updated:
         updated["id"] = updated.get("notification_id") or str(updated["_id"])
+    if "created_date" in updated:
+        if isinstance(updated["created_date"], datetime):
+            updated["created_date"] = updated["created_date"].replace(tzinfo=timezone.utc, microsecond=0).isoformat().replace("+00:00", "Z")
+        elif isinstance(updated["created_date"], str) and not updated["created_date"].endswith("Z"):
+            updated["created_date"] = updated["created_date"] + "Z"
+    if "created_at" in updated:
+        if isinstance(updated["created_at"], datetime):
+            updated["created_at"] = updated["created_at"].replace(tzinfo=timezone.utc, microsecond=0).isoformat().replace("+00:00", "Z")
+        elif isinstance(updated["created_at"], str) and not updated["created_at"].endswith("Z"):
+            updated["created_at"] = updated["created_at"] + "Z"
     return updated

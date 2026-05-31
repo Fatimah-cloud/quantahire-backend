@@ -209,3 +209,47 @@ async def rank_cvs(jd_text: str, cv_records: list, query_override: dict = None) 
         row["rank"] = i + 1
 
     return rows
+
+
+async def generate_candidate_feedback(match_score: float, job_title: str, job_description: str, cv_summary: str = None) -> str:
+    """
+    Generate professional and constructive candidate feedback using the LLM.
+    """
+    prompt = (
+        f"You are a professional HR recruiter/assistant.\n"
+        f"Please generate a personalized feedback message for a candidate who applied to the '{job_title}' role.\n"
+        f"The candidate has a compatibility match score of {match_score}%.\n"
+    )
+    if job_description:
+        prompt += f"Job Description:\n{job_description[:1000]}\n\n"
+    if cv_summary:
+        prompt += f"Candidate CV/Resume summary/details:\n{cv_summary[:1500]}\n\n"
+        
+    prompt += (
+        "Generate a professional, encouraging, and specific feedback message (about 2-4 sentences) "
+        "discussing their qualifications, strengths, and areas they match or could improve on based on the match score. "
+        "Address the candidate directly as 'you'. "
+        "Do not include any system/prompt instructions, headers, or recruiter placeholders/signatures (e.g., '[Your Name]'). "
+        "Write only the feedback text itself."
+    )
+    
+    system_prompt = (
+        "You are an expert HR recruiter assistant. You write helpful, constructive, and professional "
+        "feedback messages directly addressed to candidates, based on their match scores and job requirements."
+    )
+    
+    try:
+        feedback = await llm_func(prompt=prompt, system_prompt=system_prompt)
+        if feedback and feedback.strip():
+            return feedback.strip()
+    except Exception as e:
+        print(f"Error generating AI feedback: {e}")
+        
+    # Return a fallback template if LLM fails or returns empty response
+    if match_score >= 80:
+        return f"Thank you for applying to the {job_title} position. Your impressive profile has a compatibility match score of {match_score}%, showing a strong alignment with our requirements. We will contact you soon."
+    elif match_score >= 50:
+        return f"Thank you for your interest in the {job_title} role. Your qualifications match several key requirements, resulting in a compatibility score of {match_score}%. We will keep you updated as we review all applications."
+    else:
+        return f"Thank you for your application for the {job_title} role. We appreciate your interest, but with a compatibility score of {match_score}%, we have decided to focus on other applicants whose skills closer fit our immediate needs."
+
