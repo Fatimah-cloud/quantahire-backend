@@ -254,7 +254,7 @@ async def process_cv(req: ProcessCVRequest):
         print("Embedding similarity error:", e)
         sim_score = 50.0
         
-    llm_total, verdict, scores = await llm_score(req.job_description, cv_text)
+    llm_total, verdict, scores, reasons = await llm_score(req.job_description, cv_text)
     final_score = hybrid_score(sim_score, llm_total)
     
     feedback_text = await generate_candidate_feedback(
@@ -273,8 +273,9 @@ async def process_cv(req: ProcessCVRequest):
             "feedback": feedback_text,
             "rag_results": {
                 "feedback": verdict,
-                "ranking_reason": verdict,
-                "scores": scores
+                "ranking_reason": reasons.get("explanation") or verdict,
+                "scores": scores,
+                "reasons": reasons
             }
         }}
     )
@@ -451,10 +452,12 @@ async def rank_and_feedback(job_id: str):
         if final_score is not None:
             update_doc["match_score"] = final_score
         if verdict is not None:
+            explanation = row.get("reasons", {}).get("explanation", "") if row else ""
             update_doc["rag_results"] = {
                 "feedback": verdict,
-                "ranking_reason": verdict,
-                "scores": scores
+                "ranking_reason": explanation or verdict,
+                "scores": scores,
+                "reasons": row.get("reasons", {}) if row else {}
             }
             
         await application_col.update_one({"id": app_id}, {"$set": update_doc})

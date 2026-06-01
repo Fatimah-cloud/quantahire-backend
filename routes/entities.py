@@ -603,7 +603,8 @@ async def get_applications_by_job(job_id: str, user: dict = Depends(get_user_by_
             "upload_date": app.get("created_date") or app.get("created_at") or "—",
             "match_score": app.get("match_score"),
             "status": app.get("status") or "pending",
-            "feedback": app.get("feedback")
+            "feedback": app.get("feedback"),
+            "rag_results": app.get("rag_results")
         })
         
     return formatted_apps

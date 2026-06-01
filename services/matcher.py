@@ -48,6 +48,7 @@ REWRITE_SYSTEM = (
 )
 
 def parse_rating(resp: str):
+    import re
     scores  = {"work_exp": 3, "skills": 3, "education": 3, "certifications": 3}
     reasons = {"work_exp": "", "skills": "", "education": "", "certifications": ""}
     lines   = resp.strip().split("\n")
@@ -64,16 +65,20 @@ def parse_rating(resp: str):
             in_rating, in_reasons = False, True
             continue
         if in_rating:
+            cleaned = line.replace("*", "").replace("-", "").strip()
+            cleaned = re.sub(r'^\d+[\.\)\s]+', '', cleaned).strip()
+            
             for key, prefix in [
-                ("work_exp",      "Work Experience Match:"),
-                ("skills",        "Skills Match:"),
+                ("work_exp",      "Work Experience Match"),
+                ("skills",        "Skills Match"),
                 ("education",     "Educational Background Match"),
-                ("certifications","Certifications/Extracurricular Match:"),
+                ("certifications","Certifications/Extracurricular Match"),
             ]:
-                if line.startswith(prefix):
+                if prefix.lower() in cleaned.lower():
                     try:
-                        val = line.split(":", 1)[1].strip() if ":" in line else line.replace(prefix, "").strip()
-                        scores[key] = int(val.split()[0]) if val else 3
+                        digits = re.findall(r'\b[1-5]\b', cleaned)
+                        if digits:
+                            scores[key] = int(digits[0])
                     except:
                         pass
         elif in_reasons:
@@ -83,6 +88,7 @@ def parse_rating(resp: str):
     parts = [p.strip() + "." for p in full.split(".") if p.strip()]
     for i, key in enumerate(["work_exp", "skills", "education", "certifications"]):
         reasons[key] = parts[i] if i < len(parts) else (full[:100] if i == 0 else "")
+    reasons["explanation"] = full
     return scores, reasons
 
 def total_match_from_scores(scores: dict) -> float:
@@ -100,16 +106,20 @@ async def llm_score(jd_text: str, cv_context: str):
     )
     try:
         resp             = await llm_func(prompt=prompt, system_prompt=SCORE_SYSTEM)
+        print(f"[DEBUG matcher.py llm_score] Extracted CV text length: {len(cv_context or '')}")
+        print(f"[DEBUG matcher.py llm_score] Raw LLM Response:\n{resp}")
         scores, reasons  = parse_rating(resp)
+        print(f"[DEBUG matcher.py llm_score] Parsed Scores: {scores}")
         total            = total_match_from_scores(scores)
         verdict = (
             f"WE:{scores['work_exp']} Sk:{scores['skills']} "
             f"Ed:{scores['education']} Cert:{scores['certifications']} "
             f"| {reasons['skills'][:60]}"
         )
-        return total, verdict, scores
+        return total, verdict, scores, reasons
     except Exception as e:
-        return 50, f"LLM error: {str(e)[:100]}", {}
+        print(f"[DEBUG matcher.py llm_score] Exception encountered: {e}")
+        return 50, f"LLM error: {str(e)[:100]}", {}, {}
 
 def build_query(cv_id: str, category: str, jd_text: str) -> str:
     return (
@@ -164,6 +174,11 @@ async def rank_cvs(jd_text: str, cv_records: list, query_override: dict = None) 
     top_k = sim_scores[:TOP_K_FOR_LLM]
     rest  = sim_scores[TOP_K_FOR_LLM:]
 
+    print(f"[DEBUG matcher.py rank_cvs] Total CVs to rank: {len(cv_records)}")
+    print(f"[DEBUG matcher.py rank_cvs] TOP_K_FOR_LLM value: {TOP_K_FOR_LLM}")
+    print(f"[DEBUG matcher.py rank_cvs] Top K CVs for LLM scoring: {len(top_k)}")
+    print(f"[DEBUG matcher.py rank_cvs] Rest (similarity only): {len(rest)}")
+
     rows = []
 
     # Stage B: LLM deep scoring for top-K
@@ -177,7 +192,7 @@ async def rank_cvs(jd_text: str, cv_records: list, query_override: dict = None) 
         except:
             context = cv_text
 
-        llm_total, verdict, scores = await llm_score(jd_text, context)
+        llm_total, verdict, scores, reasons = await llm_score(jd_text, context)
         final = hybrid_score(sim_score, llm_total)
 
         rows.append({
@@ -189,6 +204,7 @@ async def rank_cvs(jd_text: str, cv_records: list, query_override: dict = None) 
             "final_score": final,
             "verdict":     verdict,
             "scores":      scores,
+            "reasons":     reasons,
         })
 
     # Stage C: rest — similarity only
@@ -202,6 +218,7 @@ async def rank_cvs(jd_text: str, cv_records: list, query_override: dict = None) 
             "final_score": sim_score,
             "verdict":     f"[Similarity only — ranked below top {TOP_K_FOR_LLM}]",
             "scores":      {},
+            "reasons":     {},
         })
 
     rows.sort(key=lambda x: x["final_score"], reverse=True)
