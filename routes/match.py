@@ -368,14 +368,11 @@ async def rank_and_feedback(job_id: str):
     job = await db["jobs"].find_one({"$or": [{"id": job_id}, {"job_id": job_id}]})
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-        
     application_col = db["applications"]
     apps = await application_col.find({"job_id": job_id}).to_list(length=1000)
     if not apps:
         raise HTTPException(status_code=400, detail="No applications found for this job")
-        
-    await application_col.update_many({"job_id": job_id}, {"$set": {"feedback": ""}})
-    
+    await application_col.update_many({"job_id": job_id}, {"$set": {"feedback": "", "status": "pending"}})
     cv_records = []
     for app in apps:
         cv_url = app.get("cv_url", "")
@@ -435,9 +432,7 @@ async def rank_and_feedback(job_id: str):
         if not skills_list:
             skills_list = app.get("skills") or app.get("extracted_skills") or []
             
-        status = app.get("status", "pending") or "pending"
-        status = status.lower().strip()
-        
+        status = "pending"
         if status == "shortlisted":
             skills_str = format_skills(skills_list)
             feedback = f"Congratulations! Your application for {job['title']} has been shortlisted. Your skills in {skills_str} align well with our requirements. Our team will contact you shortly with next steps."
@@ -447,7 +442,8 @@ async def rank_and_feedback(job_id: str):
             feedback = f"Your application for {job['title']} is currently under review. We will notify you once a decision has been made."
             
         update_doc = {
-            "feedback": feedback
+            "feedback": feedback,
+            "status": status
         }
         if final_score is not None:
             update_doc["match_score"] = final_score
