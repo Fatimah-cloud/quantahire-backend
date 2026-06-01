@@ -3,8 +3,9 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from typing import Optional
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Header
+from fastapi.responses import JSONResponse, FileResponse
 from db.mongo import cvs_col, db
 from config import UPLOAD_DIR
 from routes.auth import get_user_by_token
@@ -148,4 +149,76 @@ async def delete_candidate_cv(user: dict = Depends(get_user_by_token)):
             )
             
     return {"message": "CV deleted successfully"}
+
+
+@router.get("/{cv_id}/download")
+async def download_cv(
+    cv_id: str, 
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = None
+):
+    """
+    Download a CV by its cv_id, adding debug logging about file existence,
+    paths, database registration, and requester role.
+    """
+    # 1. Retrieve user details if authenticated
+    user = None
+    auth_token = None
+    if authorization and authorization.startswith("Bearer "):
+        auth_token = authorization.split(" ")[1]
+    elif token:
+        auth_token = token
+
+    if auth_token:
+        user = await db["users"].find_one({"id": auth_token}, {"_id": 0})
+
+    user_permission = user.get("role") if user else "Anonymous (No Auth Token)"
+    user_email = user.get("email") if user else "Anonymous"
+
+    # 2. Database existence check (in cvs & applications collections)
+    cv_record = await cvs_col.find_one({"cv_id": cv_id})
+    db_exists = cv_record is not None
+    filename = None
+    
+    if db_exists:
+        filename = cv_record.get("filename") or cv_record.get("original_filename")
+    else:
+        # Fallback: check if cv_id is a user_id or username
+        cv_record = await cvs_col.find_one({"user_id": cv_id})
+        if cv_record:
+            db_exists = True
+            filename = cv_record.get("filename") or cv_record.get("original_filename")
+        else:
+            # Check by application_id in applications collection
+            app_record = await db["applications"].find_one({"id": cv_id})
+            if app_record:
+                cv_url = app_record.get("cv_url", "")
+                if cv_url:
+                    filename = cv_url.split("/")[-1]
+                    db_exists = True
+
+    # 3. Storage existence check
+    target_path = ""
+    file_exists_on_disk = False
+    if db_exists and filename:
+        target_path = os.path.join(UPLOAD_DIR, filename)
+        file_exists_on_disk = os.path.exists(target_path)
+
+    # 4. Detailed Logging
+    print("\n" + "="*60)
+    print("DEBUG LOG: CV DOWNLOAD REQUEST (by cv_id)")
+    print(f"Requested CV ID / Reference: {cv_id}")
+    print(f"Target Filename: {filename or 'N/A'}")
+    print(f"Target Path: {target_path or 'N/A'}")
+    print(f"Exists in Database: {db_exists}")
+    print(f"Exists on Disk: {file_exists_on_disk}")
+    print(f"Requester Email: {user_email}")
+    print(f"Requester Role/Permission Level: {user_permission}")
+    print("="*60 + "\n")
+
+    if not db_exists or not file_exists_on_disk:
+        raise HTTPException(status_code=404, detail="CV not found")
+
+    return FileResponse(target_path, filename=filename)
+
 

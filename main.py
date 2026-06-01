@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from typing import Optional
 import os
 from config import UPLOAD_DIR
 from routes import cvs, jobs, match, auth, entities, upload, psych
@@ -28,6 +30,71 @@ from routes import notifications
 app.include_router(notifications.router)
 app.include_router(psych.router)
 app.include_router(entities.router)
+
+
+@app.get("/uploads/{filename}")
+async def serve_upload_file(
+    filename: str,
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = None
+):
+    """
+    Serves files from uploads/ folder, adding logging to show requested file ID/name,
+    its existence on disk/DB, and the user's permission level.
+    """
+    # 1. Check user permission level
+    user = None
+    auth_token = None
+    if authorization and authorization.startswith("Bearer "):
+        auth_token = authorization.split(" ")[1]
+    elif token:
+        auth_token = token
+
+    if auth_token:
+        user = await db["users"].find_one({"id": auth_token}, {"_id": 0})
+
+    user_permission = user.get("role") if user else "Anonymous (No Auth Token)"
+    user_email = user.get("email") if user else "Anonymous"
+
+    # 2. Storage existence check
+    target_path = os.path.join(UPLOAD_DIR, filename)
+    file_exists_on_disk = os.path.exists(target_path)
+
+    # 3. Database existence check
+    # Check in cvs collection first
+    cv_record = await db["cvs"].find_one({"filename": filename})
+    db_exists = cv_record is not None
+    record_source = "cvs collection"
+
+    if not db_exists:
+        # Check in applications collection where cv_url ends with filename
+        app_record = await db["applications"].find_one({"cv_url": {"$regex": filename + "$"}})
+        if app_record:
+            db_exists = True
+            record_source = "applications collection"
+        else:
+            # Check in recruiters collection (for recruiter certificates)
+            rec_record = await db["recruiters"].find_one({"certificate_url": {"$regex": filename + "$"}})
+            if rec_record:
+                db_exists = True
+                record_source = "recruiters collection"
+
+    # 4. Detailed Logging
+    print("\n" + "="*60)
+    print("DEBUG LOG: STATIC UPLOADS ACCESS REQUEST")
+    print(f"Requested File Name: {filename}")
+    print(f"Target Path: {target_path}")
+    print(f"Exists in Database: {db_exists} ({record_source if db_exists else 'Not found in DB'})")
+    print(f"Exists on Disk: {file_exists_on_disk}")
+    print(f"Requester Email: {user_email}")
+    print(f"Requester Role/Permission Level: {user_permission}")
+    print("="*60 + "\n")
+
+    if not file_exists_on_disk:
+        # Starlette's StaticFiles returns a 404 detail Not Found, let's match it
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    return FileResponse(target_path)
 
 
 # Mount static uploads directory

@@ -6,6 +6,20 @@ from config import TOP_K_FOR_LLM, RAG_STORAGE, WEIGHT_SIM, WEIGHT_LLM, MAX_ROUND
 from services.llm import llm_func, vision_func
 from services.embeddings import hf_embedding_func, embedding_func
 
+def safe_print(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            import sys
+            sys.stdout.buffer.write((msg + "\n").encode('utf-8', errors='replace'))
+            sys.stdout.flush()
+        except:
+            try:
+                print(msg.encode('ascii', errors='ignore').decode('ascii'))
+            except:
+                pass
+
 # ── RAG / Knowledge Graph setup ──────────────────────────────────────────────
 rag_config = RAGAnythingConfig(
     working_dir              = RAG_STORAGE,
@@ -106,10 +120,10 @@ async def llm_score(jd_text: str, cv_context: str):
     )
     try:
         resp             = await llm_func(prompt=prompt, system_prompt=SCORE_SYSTEM)
-        print(f"[DEBUG matcher.py llm_score] Extracted CV text length: {len(cv_context or '')}")
-        print(f"[DEBUG matcher.py llm_score] Raw LLM Response:\n{resp}")
+        safe_print(f"[DEBUG matcher.py llm_score] Extracted CV text length: {len(cv_context or '')}")
+        safe_print(f"[DEBUG matcher.py llm_score] Raw LLM Response:\n{resp}")
         scores, reasons  = parse_rating(resp)
-        print(f"[DEBUG matcher.py llm_score] Parsed Scores: {scores}")
+        safe_print(f"[DEBUG matcher.py llm_score] Parsed Scores: {scores}")
         total            = total_match_from_scores(scores)
         verdict = (
             f"WE:{scores['work_exp']} Sk:{scores['skills']} "
@@ -118,7 +132,7 @@ async def llm_score(jd_text: str, cv_context: str):
         )
         return total, verdict, scores, reasons
     except Exception as e:
-        print(f"[DEBUG matcher.py llm_score] Exception encountered: {e}")
+        safe_print(f"[DEBUG matcher.py llm_score] Exception encountered: {e}")
         return 50, f"LLM error: {str(e)[:100]}", {}, {}
 
 def build_query(cv_id: str, category: str, jd_text: str) -> str:
@@ -186,14 +200,30 @@ async def rank_cvs(jd_text: str, cv_records: list, query_override: dict = None) 
         query   = (query_override or {}).get(cv["cv_id"], build_query(cv["cv_id"], cv.get("category", "General"), jd_text))
         cv_text = cv.get("text", "")
 
+        safe_print(f"=== Ranking CV: {cv['cv_id']} ===")
+        safe_print(f"CV text length: {len(cv.get('text', ''))}")
+        safe_print(f"Job description length: {len(jd_text)}")
+
         try:
             rag_ctx = await rag.aquery(query=query, mode="hybrid", top_k=10)
             context = cv_text + ("\n\n" + rag_ctx if rag_ctx and len(rag_ctx.strip()) > 100 else "")
         except:
             context = cv_text
 
+        # After similarity calculation
+        safe_print(f"Similarity score: {sim_score}")
+
         llm_total, verdict, scores, reasons = await llm_score(jd_text, context)
         final = hybrid_score(sim_score, llm_total)
+
+        # After LLM scoring
+        safe_print(f"LLM total score: {llm_total}")
+        safe_print(f"LLM verdict: {verdict}")
+        safe_print(f"Scores breakdown: {scores}")
+
+        # After hybrid score
+        safe_print(f"Final hybrid score: {final}")
+        safe_print(f"Weight_SIM: {WEIGHT_SIM}, Weight_LLM: {WEIGHT_LLM}")
 
         rows.append({
             "cv_id":       cv["cv_id"],
