@@ -311,12 +311,15 @@ async def agentic_rank(req: AgenticRankRequest):
         if not cv_text:
             cv_text = f"Resume of {app.get('candidate_name', 'Unknown')}. Skills: {', '.join(app.get('skills', [])) or 'Development'}."
             
-        cv_records.append({
+        cv_item = {
             "cv_id": app.get("id"),
             "text": cv_text,
             "category": "General",
             "original_filename": filename
-        })
+        }
+        if os.path.exists(local_path):
+            cv_item["path"] = local_path
+        cv_records.append(cv_item)
         
     if not cv_records:
         raise HTTPException(status_code=400, detail="No applications with CV files found")
@@ -390,12 +393,15 @@ async def rank_and_feedback(job_id: str):
         if not cv_text:
             cv_text = f"Resume of {app.get('candidate_name', 'Unknown')}. Skills: {', '.join(app.get('skills', [])) or 'Development'}."
             
-        cv_records.append({
+        cv_item = {
             "cv_id": app.get("id"),
             "text": cv_text,
             "category": "General",
             "original_filename": filename
-        })
+        }
+        if os.path.exists(local_path):
+            cv_item["path"] = local_path
+        cv_records.append(cv_item)
         
     ranked_results = []
     if cv_records:

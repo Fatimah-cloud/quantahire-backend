@@ -16,8 +16,8 @@ EMBED_DIM        = int(os.getenv("EMBED_DIM", "768"))
 
 # ── Ranking ───────────────────────────────────────────────────────────────────
 TOP_K_FOR_LLM  = int(os.getenv("TOP_K_FOR_LLM", "10"))
-WEIGHT_SIM     = float(os.getenv("WEIGHT_SIM", "0.3"))   # embedding similarity weight
-WEIGHT_LLM     = float(os.getenv("WEIGHT_LLM", "0.7"))   # LLM score weight
+WEIGHT_SIM     = float(os.getenv("WEIGHT_SIM", "0.2"))   # embedding similarity weight
+WEIGHT_LLM     = float(os.getenv("WEIGHT_LLM", "0.8"))   # LLM score weight
 MAX_ROUNDS     = int(os.getenv("MAX_ROUNDS", "3"))        # max human-in-the-loop rounds
 
 # ── MongoDB ───────────────────────────────────────────────────────────────────

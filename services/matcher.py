@@ -16,6 +16,8 @@ from services.embeddings import hf_embedding_func, embedding_func
 
 # One RAGAnything instance per job_id, keyed by job_id string
 _rag_instances: dict[str, RAGAnything] = {}
+# Tracks which CV paths have already been indexed in the per-job RAG graph during this process lifetime
+_indexed_cvs: dict[str, set[str]] = {}
 
 
 def get_rag_for_job(job_id: str) -> RAGAnything:
@@ -28,7 +30,7 @@ def get_rag_for_job(job_id: str) -> RAGAnything:
 
     config = RAGAnythingConfig(
         working_dir=job_storage,
-        parser="mineru",
+        parser="paddleocr",
         parse_method="auto",
         enable_image_processing=False,
         enable_table_processing=True,
@@ -54,6 +56,11 @@ async def index_cv_into_rag(cv_path: str, job_id: str) -> bool:
         print(f"[RAG index] File not found: {cv_path}")
         return False
 
+    if job_id not in _indexed_cvs:
+        _indexed_cvs[job_id] = set()
+    if cv_path in _indexed_cvs[job_id]:
+        return True
+
     rag = get_rag_for_job(job_id)
     try:
         await rag.process_document_complete(
@@ -61,6 +68,7 @@ async def index_cv_into_rag(cv_path: str, job_id: str) -> bool:
             output_dir=os.path.join(RAG_STORAGE, job_id, "parsed"),
         )
         print(f"[RAG index] Indexed {os.path.basename(cv_path)} into job graph '{job_id}'")
+        _indexed_cvs[job_id].add(cv_path)
         return True
     except Exception as e:
         print(f"[RAG index] Failed to index {cv_path}: {e}")
@@ -172,6 +180,10 @@ def build_query(cv_id: str, category: str, jd_text: str) -> str:
 
 
 async def rewrite_query(jd_text: str, current_query: str, feedback: str, history=None) -> str:
+    print(f"\n=== REWRITE QUERY ===")
+    print(f"Original query: {current_query}")
+    print(f"Feedback: {feedback}")
+
     history_text = ""
     if history:
         history_text = "\nPREVIOUS ATTEMPTS:\n"
@@ -192,6 +204,7 @@ async def rewrite_query(jd_text: str, current_query: str, feedback: str, history
     )
     try:
         result = await llm_func(prompt=prompt, system_prompt=REWRITE_SYSTEM)
+        print(f"New query: {result}")
         return result.strip() if result else current_query
     except Exception:
         return current_query
@@ -204,6 +217,11 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
     job_id: used to load the correct per-job RAG graph
     Returns: list of result dicts sorted by final_score descending
     """
+    print(f"\n=== RANKING DEBUG ===")
+    print(f"Job description length: {len(jd_text)}")
+    print(f"Number of CVs to rank: {len(cv_records)}")
+    print(f"TOP_K_FOR_LLM setting: {TOP_K_FOR_LLM}")
+
     rag = get_rag_for_job(job_id)
 
     jd_emb     = await hf_embedding_func([jd_text])
@@ -229,6 +247,11 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
         query   = (query_override or {}).get(cv["cv_id"], build_query(cv["cv_id"], cv.get("category", "General"), jd_text))
         cv_text = cv.get("text", "")
 
+        # On-the-fly RAG indexing if not already indexed
+        cv_path = cv.get("path")
+        if cv_path and os.path.exists(cv_path):
+            await index_cv_into_rag(cv_path, job_id)
+
         rag_ctx = ""
         try:
             rag_ctx = await rag.aquery(query=query, mode="hybrid", top_k=10)
@@ -244,6 +267,13 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
         llm_total, verdict, scores, reasons = await llm_score(jd_text, context)
         final = hybrid_score(sim_score, llm_total)
 
+        print(f"\n--- CV: {cv.get('cv_id')} ---")
+        print(f"CV text length: {len(cv.get('text', ''))}")
+        print(f"Similarity score: {sim_score}")
+        print(f"LLM total score: {llm_total}")
+        print(f"Scores breakdown: {scores}")
+        print(f"Final score: {final}")
+
         rows.append({
             "cv_id":       cv["cv_id"],
             "filename":    cv.get("original_filename", cv["cv_id"]),
@@ -258,6 +288,11 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
         })
 
     for cv, sim_score in rest:
+        print(f"\n--- CV: {cv.get('cv_id')} (Rest - similarity only) ---")
+        print(f"CV text length: {len(cv.get('text', ''))}")
+        print(f"Similarity score: {sim_score}")
+        print(f"Final score: {sim_score}")
+
         rows.append({
             "cv_id":       cv["cv_id"],
             "filename":    cv.get("original_filename", cv["cv_id"]),
