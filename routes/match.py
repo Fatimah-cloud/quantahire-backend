@@ -71,8 +71,11 @@ async def start_match(req: MatchRequest):
 
 # ── Submit feedback and re-rank ───────────────────────────────────────────────
 
+from typing import Optional
+
 class FeedbackRequest(BaseModel):
     feedback: str   # "yes" to approve, or text feedback to re-rank
+    job_id: Optional[str] = None
 
 @router.post("/{session_id}/feedback")
 async def submit_feedback(session_id: str, req: FeedbackRequest):
@@ -82,7 +85,59 @@ async def submit_feedback(session_id: str, req: FeedbackRequest):
     """
     session = await sessions_col.find_one({"session_id": session_id})
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        session = await sessions_col.find_one({"job_id": session_id})
+    if not session and req.job_id:
+        session = await sessions_col.find_one({"job_id": req.job_id})
+
+    if not session:
+        job_id = req.job_id or session_id
+        job = await jobs_col.find_one({"$or": [{"id": job_id}, {"job_id": job_id}]})
+        if not job:
+            raise HTTPException(status_code=404, detail="Session or Job not found")
+
+        # Load CV records for this job
+        cv_records = []
+        apps = await db["applications"].find({"job_id": job_id}).to_list(length=1000)
+        for app in apps:
+            cv_url = app.get("cv_url", "")
+            if not cv_url:
+                continue
+            parsed_url = urlparse(cv_url)
+            filename = os.path.basename(parsed_url.path)
+            local_path = os.path.join(UPLOAD_DIR, filename)
+            cv_text = ""
+            if os.path.exists(local_path):
+                cv_text = extract_text_from_path(local_path)
+            if not cv_text:
+                cv_text = f"Resume of {app.get('candidate_name', 'Unknown')}. Skills: {', '.join(app.get('skills', [])) or 'Development'}."
+            
+            cv_item = {
+                "cv_id": app.get("id"),
+                "text": cv_text,
+                "category": "General",
+                "original_filename": filename
+            }
+            if os.path.exists(local_path):
+                cv_item["path"] = local_path
+            cv_records.append(cv_item)
+            
+        if not cv_records:
+            cv_records = await cvs_col.find({}, {"_id": 0}).to_list(length=1000)
+
+        # Run ranking to get current_results
+        results = await rank_cvs(job["description"], cv_records, job_id=job_id)
+
+        session = {
+            "session_id":      session_id,
+            "job_id":          job_id,
+            "jd_text":         job["description"],
+            "cv_records":      cv_records,
+            "round":           1,
+            "history":         [],
+            "current_results": results,
+            "approved":        False,
+        }
+        await sessions_col.insert_one(session)
 
     if session["approved"]:
         raise HTTPException(status_code=400, detail="Session already approved")
@@ -464,10 +519,39 @@ async def rank_and_feedback(job_id: str):
             }
             
         await application_col.update_one({"id": app_id}, {"$set": update_doc})
+
+    # Create session for human-in-the-loop
+    session_id = f"session_{uuid.uuid4().hex[:8]}"
+    session = {
+        "session_id":      session_id,
+        "job_id":          job_id,
+        "jd_text":         job["description"],
+        "cv_records":      cv_records,
+        "round":           1,
+        "history":         [],
+        "current_results": ranked_results,
+        "approved":        False,
+    }
+    await sessions_col.delete_many({"job_id": job_id})
+    await sessions_col.insert_one(session)
+
+    # Save round 1 results to results collection
+    await results_col.update_one(
+        {"job_id": job_id},
+        {"$set": {
+            "job_id":   job_id,
+            "job_title": job["title"],
+            "rounds":   [{"round": 1, "results": ranked_results}],
+            "final":    ranked_results,
+            "approved": False,
+        }},
+        upsert=True,
+    )
         
     return {
         "success": True,
-        "message": f"Ranking completed and feedback generated for {len(apps)} candidates."
+        "message": f"Ranking completed and feedback generated for {len(apps)} candidates.",
+        "session_id": session_id
     }
 
 

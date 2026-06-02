@@ -111,6 +111,62 @@ async def health():
 
 @app.on_event("startup")
 async def startup_db_client():
+    # 1. Clean up duplicate applications before creating the unique indexes
+    try:
+        application_col = db["applications"]
+        apps = await application_col.find({}).to_list(length=10000)
+        seen_email = set()
+        seen_id = set()
+        to_delete = []
+        for app in apps:
+            jid = app.get("job_id")
+            email = app.get("candidate_email")
+            cid = app.get("candidate_id")
+            
+            email_clean = email.strip().lower() if email else None
+            
+            is_dup = False
+            if jid and email_clean:
+                email_key = (jid, email_clean)
+                if email_key in seen_email:
+                    is_dup = True
+                else:
+                    seen_email.add(email_key)
+                    
+            if jid and cid and not is_dup:
+                id_key = (jid, cid)
+                if id_key in seen_id:
+                    is_dup = True
+                else:
+                    seen_id.add(id_key)
+                    
+            if is_dup:
+                to_delete.append(app["_id"])
+                
+        if to_delete:
+            await application_col.delete_many({"_id": {"$in": to_delete}})
+            print(f"Cleaned up {len(to_delete)} duplicate applications on startup ✅")
+    except Exception as e:
+        print(f"Duplicate applications cleanup failed: {e}")
+
+    # 2. Create unique indexes
+    try:
+        application_col = db["applications"]
+        # Index 1: (job_id, candidate_email) unique
+        await application_col.create_index(
+            [("job_id", 1), ("candidate_email", 1)],
+            unique=True
+        )
+        # Index 2: (job_id, candidate_id) partial unique to handle null/None values
+        await application_col.create_index(
+            [("job_id", 1), ("candidate_id", 1)],
+            unique=True,
+            partialFilterExpression={"candidate_id": {"$type": "string"}}
+        )
+        print("Created unique indexes on applications (job_id + candidate_email/candidate_id) ✅")
+    except Exception as e:
+        print(f"Failed to create applications unique indexes: {e}")
+
     # Update any jobs in the jobs collection that don't have a status field, setting it to "open"
     try:
         await db["jobs"].update_many({"status": {"$exists": False}}, {"$set": {"status": "open"}})

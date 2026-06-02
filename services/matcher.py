@@ -79,7 +79,12 @@ SCORE_SYSTEM = (
     "You are a professional HR that rates resumes. Generate a score on the scale 1-5 for each "
     "work experience match, skills match, educational background match and certifications/extracurricular "
     "match based on the job description summary and resume. Additionally provide the reasons for the "
-    "generated rating. Be strict in rating.\n\n"
+    "generated rating. Rate candidate resumes accurately and fairly:\n"
+    "- 5: Perfect match (covers all or almost all key requirements and experience levels)\n"
+    "- 4: Good match (covers most key requirements with minor gaps)\n"
+    "- 3: Moderate match (covers some requirements, suitable with training)\n"
+    "- 2: Weak match (major gaps in skills or experience)\n"
+    "- 1: No match (unrelated profile)\n\n"
     "The format of the output should be exactly like following:\n\n"
     "Rating: \n"
     "Work Experience Match: \n"
@@ -143,7 +148,23 @@ def parse_rating(resp: str):
 
 
 def total_match_from_scores(scores: dict) -> float:
-    avg   = sum(scores.values()) / 4.0
+    # Work Experience: 40%, Skills: 40%, Education: 10%, Certifications: 10%
+    weight_work_exp = 0.4
+    weight_skills = 0.4
+    weight_education = 0.1
+    weight_certifications = 0.1
+    
+    work_exp = scores.get("work_exp", 3)
+    skills = scores.get("skills", 3)
+    education = scores.get("education", 3)
+    certifications = scores.get("certifications", 3)
+    
+    avg = (
+        work_exp * weight_work_exp +
+        skills * weight_skills +
+        education * weight_education +
+        certifications * weight_certifications
+    )
     total = (avg - 1) * 25
     return max(0, min(100, round(total, 1)))
 

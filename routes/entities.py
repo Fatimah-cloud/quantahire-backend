@@ -349,6 +349,25 @@ async def create_entity(collection: str, data: dict):
     col_name = get_collection_name(collection)
     col = db[col_name]
     
+    if col_name == "applications":
+        job_id = data.get("job_id")
+        candidate_id = data.get("candidate_id")
+        candidate_email = data.get("candidate_email")
+        
+        query_conditions = []
+        if candidate_id:
+            query_conditions.append({"candidate_id": candidate_id})
+        if candidate_email:
+            query_conditions.append({"candidate_email": candidate_email.strip().lower()})
+            
+        if job_id and query_conditions:
+            existing = await col.find_one({
+                "job_id": job_id,
+                "$or": query_conditions
+            })
+            if existing:
+                raise HTTPException(status_code=400, detail="Already applied to this job")
+
     # Ensure user_id/id formatting is properly populated
     if "id" not in data:
         prefix = {
