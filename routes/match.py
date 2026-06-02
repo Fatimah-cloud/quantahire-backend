@@ -28,7 +28,7 @@ async def start_match(req: MatchRequest):
         raise HTTPException(status_code=400, detail="No CVs uploaded yet")
 
     # Run ranking
-    results = await rank_cvs(job["description"], cv_records)
+    results = await rank_cvs(job["description"], cv_records, job_id=req.job_id)
 
     # Delete any existing sessions for this job to clear feedback history
     await sessions_col.delete_many({"job_id": req.job_id})
@@ -141,7 +141,7 @@ async def submit_feedback(session_id: str, req: FeedbackRequest):
     new_q    = await rewrite_query(jd_text, base_q, req.feedback, history)
     query_override = {cv["cv_id"]: new_q for cv in cv_records}
 
-    new_results = await rank_cvs(jd_text, cv_records, query_override=query_override)
+    new_results = await rank_cvs(jd_text, cv_records, job_id=session["job_id"], query_override=query_override)
     new_round   = round_num + 1
 
     # Save new round
@@ -325,7 +325,7 @@ async def agentic_rank(req: AgenticRankRequest):
     if req.recruiter_query:
         query_override = {cv["cv_id"]: req.recruiter_query for cv in cv_records}
         
-    ranked_results = await rank_cvs(req.job_description, cv_records, query_override=query_override)
+    ranked_results = await rank_cvs(req.job_description, cv_records, job_id=req.job_id, query_override=query_override)
     
     from services.matcher import generate_candidate_feedback
     for row in ranked_results:
@@ -399,7 +399,7 @@ async def rank_and_feedback(job_id: str):
         
     ranked_results = []
     if cv_records:
-        ranked_results = await rank_cvs(job["description"], cv_records)
+        ranked_results = await rank_cvs(job["description"], cv_records, job_id=job_id)
         
     def format_skills(skills):
         if not skills:
@@ -453,7 +453,8 @@ async def rank_and_feedback(job_id: str):
                 "feedback": verdict,
                 "ranking_reason": explanation or verdict,
                 "scores": scores,
-                "reasons": row.get("reasons", {}) if row else {}
+                "reasons": row.get("reasons", {}) if row else {},
+                "rag_used": row.get("rag_used", False) if row else False
             }
             
         await application_col.update_one({"id": app_id}, {"$set": update_doc})

@@ -27,7 +27,7 @@ async def llm_func(prompt, system_prompt=None, history_messages=None, **kwargs):
         )
         return resp.choices[0].message.content
     except Exception as e:
-        print(f"⚠️  DeepSeek error: {e}")
+        print(f"[LLM Error] DeepSeek error: {e}")
         return ""
 
 async def vision_func(prompt, system_prompt=None, history_messages=None, **kwargs):
