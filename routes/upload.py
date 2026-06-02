@@ -7,6 +7,7 @@ from db.mongo import db, cvs_col
 from datetime import datetime
 import fitz  # PyMuPDF
 import docx as docx_lib
+from services.matcher import rag
 
 router = APIRouter(prefix="/api/upload", tags=["Uploads"])
 
@@ -93,6 +94,14 @@ async def upload_file(
             {"$set": cv_data},
             upsert=True
         )
+        
+        # Process file with RAG
+        try:
+            print(f"[RAG] Indexing candidate CV: {cv_id} ({dest_path})")
+            await rag.process_document_complete(dest_path)
+            print(f"[RAG] Successfully indexed candidate CV: {cv_id}")
+        except Exception as e:
+            print(f"[RAG] Failed to index candidate CV: {e}")
         
         # Update corresponding Candidate profile in 'candidates' collection
         candidate = await db["candidates"].find_one({"user_id": resolved_user_id})
