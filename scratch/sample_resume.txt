@@ -1,6 +1,0 @@
-Candidate: Layan Al-Duais
-Role: Senior Full Stack Engineer
-Experience:
- - Software Engineer at QuantaHire (2024 - Present): Built an agentic recruitment pipeline using LightRAG, FastAPI, and MongoDB.
- - Frontend Developer at Quanta (2022 - 2024): Built responsive dashboards using React and TailwindCSS.
-Skills: Python, JavaScript, React, RAG, MongoDB, AWS, Docker.

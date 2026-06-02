@@ -1,8 +1,4 @@
 import os
-os.environ["FLAGS_use_onednn"] = "0"
-os.environ["FLAGS_use_mkldnn"] = "0"
-os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
-os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from raganything import RAGAnything, RAGAnythingConfig
@@ -27,7 +23,7 @@ def safe_print(msg: str):
 # ── RAG / Knowledge Graph setup ──────────────────────────────────────────────
 rag_config = RAGAnythingConfig(
     working_dir              = RAG_STORAGE,
-    parser                   = os.getenv("PARSER", "paddleocr"),
+    parser                   = "mineru",
     parse_method             = "auto",
     enable_image_processing  = False,
     enable_table_processing  = True,
