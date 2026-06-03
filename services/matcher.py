@@ -173,9 +173,16 @@ def hybrid_score(similarity: float, llm_total: float) -> float:
     return round(WEIGHT_SIM * similarity + WEIGHT_LLM * llm_total, 1)
 
 
-async def llm_score(jd_text: str, cv_context: str):
+async def llm_score(jd_text: str, cv_context: str, feedback_query: str = None):
+    focus_instruction = ""
+    if feedback_query:
+        focus_instruction = (
+            f"Recruiter Feedback / Priorities to focus on:\n{feedback_query}\n"
+            f"Evaluate and score the candidate's categories strictly focusing on these priorities.\n\n"
+        )
     prompt = (
         f"Job description summary:\n{jd_text[:3000]}\n\n"
+        f"{focus_instruction}"
         f"Resume content:\n{(cv_context or '')[:5000]}"
     )
     try:
@@ -245,7 +252,19 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
 
     rag = get_rag_for_job(job_id)
 
-    jd_emb     = await hf_embedding_func([jd_text])
+    # Stage A similarity target text
+    uniform_query = None
+    if query_override:
+        unique_queries = set(query_override.values())
+        if len(unique_queries) == 1:
+            uniform_query = list(unique_queries)[0]
+
+    if uniform_query:
+        print(f"[rank_cvs] Using uniform query override for Stage A similarity: '{uniform_query}'")
+        target_emb = await hf_embedding_func([uniform_query])
+    else:
+        target_emb = await hf_embedding_func([jd_text])
+
     sim_scores = []
     for cv in cv_records:
         text = cv.get("text", "")
@@ -253,7 +272,12 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
             sim_scores.append((cv, 0.0))
             continue
         cv_emb = await hf_embedding_func([text])
-        sim    = cosine_similarity(jd_emb, cv_emb)[0][0]
+        if query_override and not uniform_query:
+            cv_query = query_override.get(cv["cv_id"], jd_text)
+            curr_target_emb = await hf_embedding_func([cv_query])
+            sim = cosine_similarity(curr_target_emb, cv_emb)[0][0]
+        else:
+            sim = cosine_similarity(target_emb, cv_emb)[0][0]
         sim_scores.append((cv, round(max(0.0, float(sim)) * 100, 1)))
 
     sim_scores.sort(key=lambda x: x[1], reverse=True)
@@ -285,7 +309,8 @@ async def rank_cvs(jd_text: str, cv_records: list, job_id: str, query_override: 
             print(f"[rank_cvs] RAG query error for {cv['cv_id']}: {e}")
 
         context = cv_text + ("\n\n" + rag_ctx if rag_ctx else "")
-        llm_total, verdict, scores, reasons = await llm_score(jd_text, context)
+        feedback_query = query_override.get(cv["cv_id"]) if query_override else None
+        llm_total, verdict, scores, reasons = await llm_score(jd_text, context, feedback_query=feedback_query)
         final = hybrid_score(sim_score, llm_total)
 
         print(f"\n--- CV: {cv.get('cv_id')} ---")
